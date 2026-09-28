@@ -1,5 +1,17 @@
+# Environment
 .venv/
-data/raw/
 __pycache__/
+*.pyc
 .ipynb_checkpoints/
+.DS_Store
+
+# Data (never commit datasets)
+data/raw/*
+data/processed/*
+
+# Model artifacts
 models/*.pkl
+models/*.joblib
+
+# Keep placeholder files so empty folders stay in git
+!.gitkeep
