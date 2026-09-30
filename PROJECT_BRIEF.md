@@ -1,319 +1,256 @@
-# Project Brief
+# Project Brief: Predictive Maintenance
 
-## 1. Business problem
-*Who has the problem, and what does it cost them today?*
+## 1 · Business Problem
 
+The goal is to reduce unexpected machine failures by identifying machines that are
+likely to fail soon enough for the maintenance team to take preventive action.
 
-## 2. User and action
-*Who receives the prediction, and what do they do with it?*
+The dataset contains 100 machines, with a median machine age of 12 years, and 761
+recorded component failure events during 2015. An unexpected failure interrupts
+machine operation and requires an unplanned repair or component replacement, which
+costs more than a planned replacement done before the failure.
 
+The business question is:
 
-## 3. Prediction moment
-*When does the model run?*
+> Can we use historical machine telemetry, error events, maintenance history, and
+> machine information to identify machines at higher risk of failure before the
+> failure occurs?
 
+## 2 · User and Action
 
-## 4. Horizon
-*"Will the machine fail within the next ___ hours?" Why that number?*
+The primary user is the maintenance team. The model's prediction helps the team
+decide which machines need attention before a failure occurs:
 
+1. The system generates a failure-risk prediction for each machine.
+2. The maintenance team reviews machines with elevated risk.
+3. The team investigates the machine and its recent behaviour.
+4. If appropriate, they inspect or replace a component before an unexpected failure.
 
-## 5. Target (y)
-*Any failure or which component? Binary or multi-class? Why?*
-1 · Business Problem
+The model supports maintenance prioritisation. It does not automatically decide
+that a component must be replaced.
 
-The goal is to reduce unexpected machine failures by identifying machines that are likely to fail soon enough for the maintenance team to take preventive action.
+## 3 · Prediction Moment
 
-The dataset contains 100 machines, with a median machine age of 12 years, and 761 recorded component failure events during 2015. An unexpected failure can interrupt machine operation and require an unplanned repair or component replacement.
+The model runs once a day at 06:00, aligned with the daily maintenance cycle.
 
-The business problem is therefore:
-
-Can we use historical machine telemetry, error events, maintenance history, and machine information to identify machines at higher risk of failure before the failure occurs?
-
-2 · User and Action
-
-The primary user is the maintenance team.
-
-The model's prediction should help the team decide which machines need attention before a failure occurs.
-
-For example:
-
-The system generates a failure-risk prediction for a machine.
-The maintenance team reviews machines with elevated risk.
-The team investigates the machine and its recent behavior.
-If appropriate, they can inspect or replace a component before an unexpected failure occurs.
-
-The model is therefore intended to support maintenance prioritization, rather than automatically deciding that a component must be replaced.
-
-3 · Prediction Moment
-
-The initial design will use a daily prediction schedule, with the prediction generated around the daily maintenance cycle.
-
-The dataset shows that most failure records are logged at 06:00, and maintenance records are also consistently logged at 06:00. This makes a daily prediction point practical for the first version of the project.
+The data supports this choice: most failure records and maintenance records are
+logged at 06:00.
 
 At each prediction point, the system asks:
 
-Based only on information available up to this point, is this machine likely to experience a failure soon?
+> Based only on information available up to this point, is this machine likely to
+> fail in the next 24 hours?
 
-Anything that happens after the prediction moment cannot be used as a feature.
+**Exact time windows** (prediction moment T = each day at 06:00):
 
-4 · Prediction Horizon
+- Features use data with timestamps up to and including T.
+- The label is 1 if a failure is logged after T and up to T + 24 hours.
+- A failure logged at exactly 06:00 on day D is therefore the label of the row at
+  06:00 on day D−1, and a known past event for the row at 06:00 on day D.
+- A row's features and its own label never overlap.
 
-For the first version, I would use a 24-hour prediction horizon.
+## 4 · Prediction Horizon
 
-The model will predict:
+The model predicts:
 
-Will this machine experience a failure during the next 24 hours?
+> Will this machine experience a failure during the next 24 hours?
 
-A 24-hour horizon gives the maintenance team some time to investigate a machine and potentially take preventive action.
+A 24-hour horizon gives the maintenance team time to investigate and schedule a
+part replacement.
 
-A shorter horizon could provide a more immediate prediction but less time to act. A much longer horizon would provide more planning time but could introduce more uncertainty into the prediction.
+**Evidence from EDA:** each component has a warning sensor that shifts about
+48 hours before a failure and stays shifted until it happens:
 
-The horizon can be changed later if EDA and model performance show that another window is more appropriate.
+| Component | Warning sensor | Shift in the 24h before failure |
+|---|---|---|
+| comp1 | Voltage | +1.30 std (higher) |
+| comp2 | Rotation | −1.48 std (lower) |
+| comp3 | Pressure | +2.23 std (higher) |
+| comp4 | Vibration | +1.86 std (higher) |
 
-5 · Target
+The shift is equally strong 24–48 hours before a failure and absent more than
+48 hours before. With a 24-hour look-back window, a 24-hour horizon sees the full
+warning signal for every failure. A horizon beyond 48 hours would see none of it,
+so 24 hours is supported by the data.
 
-The initial target will be any failure: yes/no.
+## 5 · Target
 
-The reason is that the failure data contains multiple component types, and the data shows that multiple components can be recorded for the same machine at the same timestamp.
+The first target is **any failure: yes/no**.
 
-Therefore, the first model will answer:
+- 1 → the machine has a failure within the next 24 hours
+- 0 → the machine does not have a failure within the next 24 hours
 
-1 → machine has a failure within the next 24 hours
-0 → machine does not have a failure within the next 24 hours
+This makes the first version a binary classification problem. Reasons:
 
-The component-specific failure type can be investigated later as a separate modeling problem.
+- Several components can fail on the same machine at the same timestamp.
+- Some components have relatively few failures (comp3: 131).
 
-This makes the first version a binary classification problem.
+EDA shows each component has its own warning sensor, so predicting *which*
+component will fail (multi-class) is a realistic extension for a later version.
 
-The failures table provides the failure events used to construct the target. The maint table should not be used as the target because maintenance records represent replacement/maintenance actions and can include preventive maintenance.
+The failures table provides the events used to build the target. The maintenance
+table is not used as the target, because maintenance records include preventive
+replacements as well as replacements after failures.
 
-6 · Grain
+## 6 · Grain
 
-The modeling dataset will use:
+**One row = one machine on one day** (at the 06:00 prediction moment).
 
-One row = one machine on one day
+With 100 machines and about 365 days of 2015 data, this gives roughly
+100 × 365 ≈ 36,500 machine-day rows.
 
-With 100 machines and approximately 365 days of 2015 data, this gives roughly:
+Example:
 
-100 × 365 ≈ 36,500 machine-day observations
+| date | machineID | features… | failure_next_24h |
+|---|---|---|---|
+| 2015-03-01 | 1 | telemetry / error features | 0 |
+| 2015-03-01 | 2 | telemetry / error features | 1 |
+| 2015-03-01 | 3 | telemetry / error features | 0 |
 
-Each row represents the information available for one machine at one prediction point.
+**Expected positive rate:** about 2% of machine-days (761 failures, fewer positive
+rows after merging failures logged at the same time on the same machine).
 
-For example:
+This grain makes it straightforward to combine telemetry, errors, maintenance
+history, machine attributes, and failure labels.
 
-date	machineID	features...	failure_next_24h
-2015-03-01	1	telemetry/error features	0
-2015-03-01	2	telemetry/error features	1
-2015-03-01	3	telemetry/error features	0
+## 7 · Allowed Inputs
 
-This daily grain also makes it easier to combine telemetry, errors, maintenance history, machine attributes, and failure labels.
+The model may only use information available at the prediction moment.
 
-7 · Allowed Inputs
+Potential inputs:
 
-The model can use information that was available before the prediction moment.
+- Recent telemetry: voltage, rotation, pressure, vibration (rolling windows, for
+  example 3 hours and 24 hours)
+- Historical error events (for example, counts per error type in the last 24 hours)
+- Historical maintenance events (for example, days since each component was last
+  replaced)
+- Machine age and machine model
+- Historical failure-related features, built only from past failures
 
-Potential inputs include:
+**Key rule:** no information from after the prediction moment can be used. For
+example, if the prediction is made on March 10 at 06:00, nothing logged after that
+moment may be used.
 
-Recent telemetry measurements
-voltage
-rotation
-pressure
-vibration
-Historical error events
-Historical maintenance/replacement events
-Machine age
-Machine model
-Historical failure-related features, where appropriate
+Maintenance data from 2014 can be used, because it occurred before the 2015
+prediction period, but maintenance features must include only events up to the
+prediction moment. This matters most for avoiding temporal leakage.
 
-The key rule is:
+## 8 · Metric
 
-No information from after the prediction moment can be used to create features.
-
-For example, if the prediction is made on March 10, information from March 11 cannot be used.
-
-The maintenance data beginning in 2014 can be used because it occurred before the 2015 prediction period. However, maintenance information must be constructed carefully so that only historical maintenance events are included.
-
-This is especially important for avoiding temporal data leakage.
-
-8 · Metric
-
-The primary evaluation metric will be recall, with PR-AUC used as an additional metric.
-
-Failures are relatively rare compared with normal machine-days. Because of this, accuracy could be misleading.
-
-For example, if almost every machine-day does not contain a failure, a model could achieve high accuracy simply by predicting:
-
-No failure
-
-for almost everything.
-
-That would not be useful to the maintenance team.
-
-Recall measures how many of the actual failures the model successfully identifies.
-
-A missed failure is particularly important because the purpose of the system is to give the maintenance team an opportunity to act before the failure.
-
-PR-AUC will provide another view of performance on the imbalanced positive class.
-
-9 · Baseline
-
-Before evaluating ML models, I will create a simple non-ML baseline.
-
-One initial rule will be:
-
-Alert if the machine experienced an error during the previous 24 hours.
-
-This provides a simple benchmark against which the ML model can be compared.
-
-The purpose of the baseline is not to maximize performance. It answers:
-
-Does the ML model provide useful predictive value beyond a simple operational rule?
-
-If the ML model cannot improve meaningfully over the baseline, that is important information about the value of the approach.
-
-10 · Train/Test Split
-
-The data will be split chronologically rather than randomly.
-
-The dataset covers approximately one year of operational data in 2015, so the initial approach will train on earlier periods and evaluate on later periods.
-
-For example:
-
-Earlier months → Training
-Later months   → Validation/Test
-
-The exact month boundaries will be finalized after the EDA and feature-building stages.
-
-A random train/test split would allow observations from later periods to enter the training set while earlier observations are being evaluated. That would not represent the way the model would actually be used in production.
-
-The production scenario is:
-
-Past data → train model → predict future data
-
-Therefore, the evaluation should follow the same temporal direction.
-
-11 · Architecture
-
-The initial architecture will be a batch prediction pipeline.
-
-Conceptually:
-
-Raw Tables
-    ↓
-Data Loading & Validation
-    ↓
-Feature Engineering
-    ↓
-Daily Machine-Level Dataset
-    ↓
-ML Model
-    ↓
-Failure Risk Prediction
-    ↓
-Maintenance Team
-
-The raw data consists of:
-
-Telemetry
-Errors
-Maintenance
-Failures
-Machines
-
-These tables will be cleaned/validated and transformed into machine-day features.
-
-The trained model will then generate a failure-risk prediction for each machine.
-
-For the first version, a daily batch job is appropriate because the prediction problem is based on daily machine-level observations.
-
-Later in the project, an API-based inference service can expose the trained model for on-demand predictions. That will allow the project to demonstrate the transition from model development to model serving.
-
-12 · Risks and Limitations
-1. Temporal data leakage
-
-The biggest modeling risk is accidentally using information that would not have been available when the prediction was made.
-
-Features must therefore be generated using only historical data.
-
-2. Imbalanced target
-
-There are 761 recorded failure events, compared with a much larger number of normal observations.
-
-This means the positive class is relatively rare and requires appropriate evaluation metrics and potentially threshold tuning.
-
-3. Few failures per component
-
-The failure events are distributed across four components:
-
-comp1 → 192
-comp2 → 259
-comp3 → 131
-comp4 → 179
-
-Some components therefore have relatively fewer failure examples. A component-specific model may not have enough observations to learn reliable patterns.
-
-This is another reason to start with the broader any-failure target.
-
-4. Limited time period
-
-The primary operational dataset covers approximately one year of 2015 data.
-
-A single year may not capture every seasonal or operational pattern that could occur over a longer period.
-
-5. Maintenance is not the same as failure
-
-Maintenance records cannot simply be treated as failure labels because maintenance can represent preventive replacement as well as replacement associated with failures.
-
-6. Logged time versus actual failure time
-
-The timestamp represents when the event was recorded/logged in the dataset. It should not automatically be interpreted as the exact physical moment when the component actually failed.
-
-7. Model predictions are decision support
-
-A high-risk prediction does not necessarily mean that a component will fail.
-
-The prediction should help the maintenance team prioritize inspection and intervention rather than automatically trigger a replacement.
-
-Project decision summary
-Decision	Initial choice
-Problem	Predict machine failure before it happens
-User	Maintenance team
-Prediction	Daily
-Horizon	Next 24 hours
-Target	Any failure: yes/no
-Grain	Machine-day
-Inputs	Historical telemetry, errors, maintenance, machine information
-Primary metric	Recall
-Secondary metric	PR-AUC
-Baseline	Error in previous 24 hours
-Split	Time-based
-Architecture	Batch ML pipeline → predictions → maintenance team
-Later serving	API inference
-Main risk	Temporal leakage
-
-## 6. Grain
-*One row = one ___ at one ___. Roughly how many rows?*
-
-
-## 7. Allowed inputs
-*Which tables and time windows can features use? What is NOT allowed?*
-
-
-## 8. Success metric
-*Primary metric and why? Cost of a missed failure vs a false alarm?*
-
-
-## 9. Baseline to beat
-*The simplest rule anyone could use without ML.*
-
-
-## 10. Split strategy
-*How will you split train/val/test? Why not a random split?*
-
-
-## 11. Architecture
-*raw tables → ... → how the prediction reaches the user*
-
-
-## 12. Risks and open questions
-*What could go wrong, and what don't you know yet?*
-
+**Cost of errors:** a missed failure means unplanned downtime and an emergency
+repair. A false alarm means one unnecessary inspection. A missed failure costs
+more, so the model should favour catching failures, but false alarms must stay
+limited, or the team will stop trusting the alerts.
+
+**Primary metric:** recall at a fixed precision floor: the share of real failures
+caught while, for example, at least half of all alerts are real failures. The
+exact floor will be set with the maintenance team's inspection capacity in mind.
+
+**Secondary metric:** PR-AUC, to compare models regardless of threshold.
+
+**Not used:** accuracy. With about 2% of machine-days containing a failure,
+predicting "no failure" every time would be about 98% accurate and useless.
+
+## 9 · Baselines
+
+Before evaluating ML models, two simple non-ML rules set the bar:
+
+1. **Error rule:** alert if the machine had any error in the previous 24 hours.
+2. **Sensor rule (from EDA):** alert if any warning sensor's 24-hour average is
+   more than 1 standard deviation from normal in its warning direction.
+
+The baselines answer one question:
+
+> Does the ML model add useful predictive value beyond a simple operational rule?
+
+If the ML model cannot clearly beat the sensor rule, that is important information
+about the value of the approach.
+
+## 10 · Train / Validation / Test Split
+
+The data is split by time, not randomly:
+
+| Part | Months (2015) | Use |
+|---|---|---|
+| Train | January–August | Fit models |
+| Validation | September–October | Compare models, tune settings, choose threshold |
+| Test | November–December | Final evaluation, used once |
+
+A random split would put later observations into training while earlier ones are
+evaluated, letting the model learn from the future. The production scenario is:
+
+> Past data → train model → predict future data
+
+so evaluation follows the same direction in time.
+
+## 11 · Architecture
+
+The first version is a daily batch prediction pipeline:
+
+    Raw tables (telemetry, errors, maintenance, failures, machines)
+        ↓
+    Data loading and validation        (src/data.py)
+        ↓
+    Feature engineering                (src/features.py)
+        ↓
+    Machine-day dataset                (data/processed/)
+        ↓
+    Trained model                      (src/train.py)
+        ↓
+    Daily failure-risk predictions
+        ↓
+    Maintenance team
+
+A daily batch job fits the problem, because predictions are made once per machine
+per day.
+
+Later in the project, an API-based inference service (FastAPI in Docker) will
+expose the trained model for on-demand predictions, showing the step from model
+development to model serving.
+
+## 12 · Risks and Limitations
+
+1. **Temporal data leakage.** The biggest modelling risk is using information that
+   would not have been available at prediction time. All features are built from
+   historical data only, using the exact time windows in section 3.
+2. **Imbalanced target.** About 2% of machine-days are positive, so the evaluation
+   uses precision-bounded recall and PR-AUC, and the threshold must be tuned.
+3. **Few failures per component.** comp1: 192 · comp2: 259 · comp3: 131 ·
+   comp4: 179. A component-specific model may not have enough examples, which is
+   another reason to start with the any-failure target.
+4. **Limited time period.** One year of data may not capture every seasonal or
+   operational pattern.
+5. **Maintenance is not the same as failure.** Maintenance includes preventive
+   replacements, so it cannot be used as the failure label.
+6. **Logged time vs actual failure time.** Timestamps show when an event was
+   recorded, not necessarily the exact moment the component failed.
+7. **Simulated data.** The dataset was generated for a Microsoft tutorial, so its
+   patterns are cleaner than a real factory's. Real sensor data would show weaker,
+   noisier warning signs.
+8. **Incomplete early history.** Telemetry starts on 2015-01-01, so rows in the
+   first days of January have less than a full 24 hours of history.
+9. **Simultaneous failures.** Several components can fail on the same machine at the
+   same time. In the binary target they count as one positive row.
+10. **Decision support only.** A high-risk prediction does not mean a component will
+    certainly fail. It helps the team prioritise inspection, not automatically
+    trigger a replacement.
+
+## Decision Summary
+
+| Decision | Initial choice |
+|---|---|
+| Problem | Predict machine failure before it happens |
+| User | Maintenance team |
+| Prediction moment | Daily at 06:00 |
+| Horizon | Next 24 hours |
+| Horizon evidence | Warning sensors shift about 48h before failure |
+| Target | Any failure: yes/no |
+| Grain | Machine-day (~36,500 rows, ~2% positive) |
+| Inputs | Historical telemetry, errors, maintenance, machine information |
+| Primary metric | Recall at a precision floor |
+| Secondary metric | PR-AUC |
+| Baselines | Error in previous 24h; warning-sensor rule |
+| Split | Time-based: Jan–Aug / Sep–Oct / Nov–Dec |
+| Architecture | Batch ML pipeline → daily predictions → maintenance team |
+| Later serving | API inference (FastAPI, Docker) |
+| Main risk | Temporal leakage |
